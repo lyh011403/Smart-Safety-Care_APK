@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Wifi, Eye, RefreshCw, History, Settings, X, Video, Mic, Volume2, Play, Rewind, FastForward, PlayCircle, BellRing, Search, Sparkles } from "lucide-react";
+import { Camera } from "@capacitor/camera";
 import { motion, AnimatePresence } from "motion/react";
 import { Task, CATEGORY_META } from "./CareTab";
 
@@ -153,6 +154,20 @@ export function MonitorTab({
   const [tempWebhookUrl, setTempWebhookUrl] = useState(webhookUrl);
   const [isEditingWebhook, setIsEditingWebhook] = useState(false);
 
+  // URL normalization function
+  const normalizeUrl = (url: string) => {
+    let trimmed = url.trim();
+    if (!trimmed) return "";
+    // Force http for local IPs
+    if (trimmed.startsWith('https://')) {
+        trimmed = 'http://' + trimmed.slice(8);
+    }
+    if (!trimmed.startsWith('http://')) {
+        trimmed = 'http://' + trimmed;
+    }
+    return trimmed;
+  };
+
   const [riskScore, setRiskScore] = useState(0);
   const [subScores, setSubScores] = useState({ distance: 0, level: 0, duration: 0 });
   const [showAlert, setShowAlert] = useState(false);
@@ -166,8 +181,12 @@ export function MonitorTab({
         // 1. 檢查攝影機連線狀態 (加上時間戳避免快取問題)
         const ts = Date.now();
         const statusRes = await fetch(`${backendUrl}/camera_status?t=${ts}`);
+        if (!statusRes.ok) throw new Error("Connection Refused");
         const statusData = await statusRes.json();
-        setCameraConnected(statusData.connected || Object.keys(statusData).length > 0);
+        setCameraConnected(true); // Backend is alive
+        // Check if our specific channel is connected in the backend
+        const isChanConnected = statusData[activeChannel] || false;
+        setLiveChannels(prev => ({ ...prev, [activeChannel]: isChanConnected }));
 
         // 2. 獲取即時風險數據
         const riskRes = await fetch(`${backendUrl}/risk_data?t=${ts}`);
@@ -320,6 +339,23 @@ export function MonitorTab({
     // 預先提示使用者正在連線
     const targetSource = cameraSource || "自動掃描";
     console.log(`正在嘗試連接攝影機: ${targetSource}`);
+
+    // 原生相機權限檢查 (僅在裝置端執行)
+    if (typeof navigator !== 'undefined' && /android|iphone|ipad/i.test(navigator.userAgent)) {
+      try {
+        const status = await Camera.checkPermissions();
+        if (status.camera !== 'granted') {
+          const requestStatus = await Camera.requestPermissions({ permissions: ['camera'] });
+          if (requestStatus.camera !== 'granted') {
+            alert("❌ 需要相機權限才能使用手機鏡頭進行辨識。");
+            setIsRefreshing(false);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn("Camera status check failed (possibly not running on native device):", e);
+      }
+    }
 
     try {
       // 如果有填寫 cameraSource，將其發送給後端。增加 ch 參數以確保更新正確頻道。
@@ -856,7 +892,12 @@ export function MonitorTab({
 
               {/* Backend URL Setting */}
               <div className="flex flex-col gap-2">
-                <span className="text-xs font-bold text-gray-400 flex items-center gap-1.5"><Wifi size={14} /> 後端伺服器位址 (Backend URL)</span>
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-xs font-bold text-gray-400 flex items-center gap-1.5"><Wifi size={14} /> 後端伺服器 (Backend)</span>
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${cameraConnected ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                    {cameraConnected ? 'LIVE' : 'OFF'}
+                  </span>
+                </div>
                 <div className="flex bg-[#e4ebf2] rounded-xl p-1 gap-1" style={{ boxShadow: "inset 2px 2px 5px #d1d9e6, inset -2px -2px 5px #ffffff" }}>
                   {isEditingUrl ? (
                     <>
@@ -869,13 +910,13 @@ export function MonitorTab({
                       />
                       <button
                         onClick={() => {
-                          let formatted = tempUrl.trim();
-                          if (formatted && formatted.endsWith('/')) formatted = formatted.slice(0, -1);
-                          setBackendUrl(formatted);
-                          localStorage.setItem('smart_care_backend_url', formatted);
+                          const normalized = normalizeUrl(tempUrl);
+                          setBackendUrl(normalized);
+                          setTempUrl(normalized);
+                          localStorage.setItem('smart_care_backend_url', normalized);
                           setIsEditingUrl(false);
                         }}
-                        className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-xs font-bold shadow-md active:scale-95 transition-all disabled:bg-gray-400 min-w-[70px]"
+                        className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-xs font-bold shadow-md active:scale-95 transition-all min-w-[70px]"
                       >
                         儲存
                       </button>
@@ -895,7 +936,33 @@ export function MonitorTab({
                     </>
                   )}
                 </div>
-                <span className="text-[10px] text-gray-400 px-1 leading-relaxed">* 請確保後端伺服器已啟動並可訪問。</span>
+                <span className="text-[10px] text-gray-400 px-1 leading-relaxed">* 指向執行 Python 程式的電腦。建議使用 http 而非 https。</span>
+              </div>
+
+              {/* Camera Source Setting */}
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-bold text-gray-400 flex items-center gap-1.5"><Video size={14} /> 手機鏡頭位址 (Camera Source)</span>
+                <div className="flex bg-[#e4ebf2] rounded-xl p-1 gap-1" style={{ boxShadow: "inset 2px 2px 5px #d1d9e6, inset -2px -2px 5px #ffffff" }}>
+                  <input
+                    type="text"
+                    value={cameraSource}
+                    onChange={(e) => setCameraSource(e.target.value)}
+                    className="flex-1 bg-transparent border-none outline-none px-3 py-1.5 text-xs font-bold text-gray-700"
+                    placeholder="http://手機IP:8080/video"
+                  />
+                  <button
+                    onClick={() => {
+                      const normalized = normalizeUrl(cameraSource);
+                      setCameraSource(normalized);
+                      localStorage.setItem("cameraSource", normalized);
+                      handleRefreshCamera();
+                    }}
+                    className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-bold shadow-md active:scale-95 transition-all min-w-[70px]"
+                  >
+                    連接
+                  </button>
+                </div>
+                <span className="text-[10px] text-gray-400 px-1 leading-relaxed">* 填寫手機顯示的 IP。系統會自動嘗試 /video 尾碼。</span>
               </div>
 
               {/* n8n Webhook Setting */}
