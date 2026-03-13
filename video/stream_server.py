@@ -27,36 +27,56 @@ except ImportError:
 
 
 # ========================
+# ========================
 #  設定
 # ========================
 PORT = 8080
-CONF_THRESHOLD = 0.3   # YOLO 信心度門檻
-FPS_TARGET = 30         # 降低幀率節省流量 (15 FPS 對手機監控足夠流暢)
-STREAM_WIDTH = 480      # 串流寬度
-JPEG_QUALITY = 30       # 降低品質大幅節省流量
+CONF_THRESHOLD = 0.3   
+FPS_TARGET = 30         
+STREAM_WIDTH = 480      
+JPEG_QUALITY = 30       
 
-# ========================
-#  初始化
-# ========================
-print(f">> 載入 YOLO 模型: {MODEL_PATH}...")
-try:
-    model = YOLO(MODEL_PATH)
-    print(">> YOLO 模型載入成功！")
-except Exception as e:
-    print(f"[警告] 載入 {MODEL_PATH} 失敗，將串流原始畫面: {e}")
-    model = None
+ROOT_DIR = os.path.dirname(BASE_DIR)
+DEFAULT_MODEL = os.path.join(ROOT_DIR, 'video', 'yolov8n.pt')
+current_model_path = DEFAULT_MODEL
+model = None
+engine = None
 
-# 使用字典管理多個頻道
+def load_yolo_model(path):
+    global model, engine
+    print(f">> [系統] 正在嘗試載入模型: {path}")
+    try:
+        # 建立新模型實例
+        new_model = YOLO(path)
+        
+        # 簡單測試一次推理以確保相依性程式庫已安裝 (例如 TFLite 需要 tensorflow)
+        import numpy as np
+        dummy = np.zeros((640, 640, 3), dtype=np.uint8)
+        new_model(dummy, verbose=False)
+        
+        model = new_model
+        # 重新初始化危險引擎
+        if DangerEngine:
+            engine = DangerEngine(frame_width=STREAM_WIDTH, frame_height=int(STREAM_WIDTH * 0.75))
+        print(f">> [系統] 模型 {os.path.basename(path)} 載入成功！")
+        return True, "成功"
+    except Exception as e:
+        error_msg = str(e)
+        if "tensorflow" in error_msg.lower():
+            error_msg = "環境缺少 tensorflow，無法執行 TFLite 模型。"
+        print(f"[錯誤] 無法載入模型 {path}: {error_msg}")
+        return False, error_msg
+
+# 初始載入
+load_yolo_model(current_model_path)
+
 caps = {}
 latest_jpegs = {}
 latest_risk_data = {"score": 0, "subScores": {"distance": 0, "level": 0, "duration": 0}, "alerts": []}
 is_running = True
-webhook_url = "https://roy1456.app.n8n.cloud/webhook-test/danger-alert"
+webhook_url = "" # 由前端同步
 last_webhook_time = 0
-notification_cooldown = 10 # 10秒冷卻時間，防止連發
-
-if DangerEngine:
-    engine = DangerEngine(frame_width=STREAM_WIDTH, frame_height=int(STREAM_WIDTH * 0.75))
+notification_cooldown = 10 
 
 def send_webhook_notification(score, sub_scores, alerts, is_test=False):
     global last_webhook_time
@@ -275,7 +295,62 @@ class StreamHandler(http.server.BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', '*')
 
+    def do_POST(self):
+        global current_model_path, webhook_url
+        from urllib.parse import urlparse
+        parsed_path = urlparse(self.path)
+        
+        if parsed_path.path == '/set_webhook':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            
+            try:
+                data = json.loads(post_data)
+                webhook_url = data.get('url', "")
+                print(f">> [Webhook] URL 已由前端設定為: {webhook_url}")
+                
+                self.send_response(200)
+                self.send_cors_headers()
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "success", "url": webhook_url}).encode())
+            except Exception as e:
+                self.send_response(400)
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+        elif parsed_path.path == '/set_model':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            
+            try:
+                data = json.loads(post_data)
+                target_path = data.get('path')
+                
+                if not target_path or not os.path.exists(target_path):
+                    success, msg = False, "路徑無效或檔案不存在"
+                else:
+                    success, msg = load_yolo_model(target_path)
+                    if success:
+                        current_model_path = target_path
+
+                self.send_response(200)
+                self.send_cors_headers()
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": success, "message": msg, "current": current_model_path}).encode())
+            except Exception as e:
+                self.send_response(400)
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+        else:
+            self.send_response(404)
+            self.send_cors_headers()
+            self.end_headers()
+
     def do_GET(self):
+        global current_model_path, webhook_url
         from urllib.parse import urlparse, parse_qs
         parsed_path = urlparse(self.path)
         params = parse_qs(parsed_path.query)
@@ -312,7 +387,6 @@ class StreamHandler(http.server.BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            import json
             # 回傳所有頻道的連線狀態
             status = {ch: True for ch in caps}
             self.wfile.write(json.dumps(status).encode())
@@ -322,7 +396,7 @@ class StreamHandler(http.server.BaseHTTPRequestHandler):
             source_param = params.get('source', [None])[0]
             
             self.send_response(200)
-            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_cors_headers()
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             
@@ -353,25 +427,15 @@ class StreamHandler(http.server.BaseHTTPRequestHandler):
             
             if not success:
                 # 自動掃描未被佔用的相機
-                used_indices = []
-                for c in caps.values():
-                    # 嘗試取得索引，若是檔案/URL 則無法取得 int 索引
-                    idx_attr = c.get(cv2.CAP_PROP_POS_FRAMES) # 這裡稍微隨便測一下
-                    # 實際上我們比較難精確知道哪個 index 被用了，簡單掃描 0,1,2 中沒在 caps 裡的
-                    pass 
-                
                 for idx in [0, 1, 2]:
-                    # 避免重複開啟已在其他頻道的相機 (這部分逻辑簡化)
                     temp_cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
                     if temp_cap.isOpened() and temp_cap.read()[0]:
-                        # 檢查是否已被其他頻道使用 (比對物件較難，此處簡單假設 index)
                         caps[ch] = temp_cap
                         print(f">> 頻道 {ch} 自動連線成功：攝影機 {idx}")
                         success = True
                         break
                     temp_cap.release()
                 
-            import json
             self.wfile.write(json.dumps({"connected": success, "ch": ch}).encode())
             
         elif parsed_path.path == '/risk_data':
@@ -379,44 +443,61 @@ class StreamHandler(http.server.BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            import json
             self.wfile.write(json.dumps(latest_risk_data).encode())
             
-        elif parsed_path.path == '/set_webhook':
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            
-            try:
-                data = json.loads(post_data)
-                global webhook_url
-                webhook_url = data.get('url', "")
-                print(f">> [Webhook] URL 已設定為: {webhook_url}")
-                
-                self.send_response(200)
-                self.send_cors_headers()
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "success", "url": webhook_url}).encode())
-            except Exception as e:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(str(e).encode())
-                
         elif parsed_path.path == '/test_webhook':
+            print(">> [Webhook] 收到手動測試請求")
+            # 模擬一組測試數據
+            test_sub_scores = {"distance": 80, "level": 90, "duration": 50}
+            test_alerts = [{"object_label": "test_object", "danger_score": 95}]
+            
+            success, msg = send_webhook_notification(95, test_sub_scores, test_alerts, is_test=True)
+            
+            self.send_response(200)
+            self.send_cors_headers()
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": success, "message": msg}).encode())
+            
+        elif parsed_path.path == '/get_available_models':
             self.send_response(200)
             self.send_cors_headers()
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             
-            if webhook_url:
-                success, msg = send_webhook_notification(99, {"distance": 50, "level": 80, "duration": 10}, [{"object_label": "TEST_OBJECT", "triggered": True}], is_test=True)
-            else:
-                success, msg = False, "未設定 Webhook URL"
-                
-            self.wfile.write(json.dumps({"success": success, "message": msg, "url": webhook_url}).encode())
+            # 掃描 YOLOv8, pt, video 跟根目錄
+            model_files = []
+            scan_dirs = [
+                os.path.join(ROOT_DIR, 'YOLOv8'),
+                os.path.join(ROOT_DIR, 'pt'),
+                os.path.join(ROOT_DIR, 'video'),
+                ROOT_DIR
+            ]
             
-        elif parsed_path.path == '/':
+            seen_paths = set()
+            for d in scan_dirs:
+                if os.path.exists(d):
+                    # 只掃描一層，避免掃進 node_modules or .venv
+                    for f in os.listdir(d):
+                        if f.endswith('.pt') or f.endswith('.tflite') or f.endswith('.onnx'):
+                            full_path = os.path.abspath(os.path.join(d, f))
+                            if full_path in seen_paths: continue
+                            seen_paths.add(full_path)
+                            
+                            rel_path = os.path.relpath(full_path, ROOT_DIR)
+                            model_files.append({
+                                "name": f,
+                                "path": full_path,
+                                "display_path": rel_path,
+                                "type": "TFLite" if f.endswith('.tflite') else ("ONNX" if f.endswith('.onnx') else "PyTorch")
+                            })
+            
+            self.wfile.write(json.dumps({
+                "models": model_files,
+                "current": current_model_path
+            }).encode())
 
+        elif parsed_path.path == '/':
             self.send_response(200)
             self.send_header('Content-Type', 'text/html')
             self.end_headers()

@@ -25,7 +25,7 @@ class DangerEngine:
         self.danger_level = {
             "scissors": 8.0,
             "knife": 8.0,
-            
+            "cutter": 8.0,
         }
 
         self.frame_width = frame_width

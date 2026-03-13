@@ -3,14 +3,16 @@ import { MonitorTab } from "./components/MonitorTab";
 import { motion, AnimatePresence } from "motion/react";
 import { HealthTab } from "./components/HealthTab";
 import { CareTab, Task, INITIAL_TASKS, INITIAL_JOURNAL_ENTRIES, JournalEntry } from "./components/CareTab";
+import { SettingsTab } from "./components/SettingsTab";
 import { Mic, MicOff, Sparkles } from "lucide-react";
 
-type Tab = "monitor" | "health" | "care";
+type Tab = "monitor" | "health" | "care" | "settings";
 
 const NAV_ITEMS: { id: Tab; label: string; emoji: string }[] = [
   { id: "monitor", label: "監控", emoji: "🔍" },
   { id: "health", label: "健康", emoji: "❤️" },
   { id: "care", label: "照護", emoji: "🤝" },
+  { id: "settings", label: "設置", emoji: "⚙️" },
 ];
 
 const orbStyles = `
@@ -285,6 +287,11 @@ function AppContent() {
                   setTasks={setTasks}
                   journalEntries={journalEntries}
                   setJournalEntries={setJournalEntries}
+                />
+              )}
+              {activeTab === "settings" && (
+                <SettingsTab
+                  isMobile={isMobile}
                 />
               )}
             </motion.div>
