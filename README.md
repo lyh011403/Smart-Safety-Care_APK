@@ -2,6 +2,7 @@
   # Smart Safety Care App
 
 Smart Safety Care 
+
 ■ 產品概述
 Smart Safety Care 是一款結合 AI 影像辨識與即時監控的照護系統。透過電腦視覺技術，系統能 24 小時不間斷地識別環境中的人體動態與特定危險物品，在意外發生前為照護者提供關鍵預警。
 
