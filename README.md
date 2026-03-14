@@ -1,11 +1,17 @@
 
   # Smart Safety Care App
 
+Smart Safety Care 
+■ 產品概述
+Smart Safety Care 是一款專為銀髮族居家安全設計的 AI 監控 App。透過先進的電腦視覺技術，將智慧型手機轉化為具備「主動守護」能力的照護設備，即時偵測潛在風險並保護長者安全。
 
+■ 核心功能說明
+AI 跌倒偵測：利用 AI 影像辨識模型，24 小時不間斷偵測人體姿勢。當偵測到疑似跌倒或異常倒地動作時，系統將即時觸發警報。
 
-  ## Running the code
+危險區域劃定：使用者可設定居家環境中的危險熱點（如廚房火源區、陽台、樓梯口），一旦長者靠近，App 將發出語音或通知提醒。
 
-  Run `npm i` to install the dependencies.
+行動端輕量化：針對手機效能優化 AI 算法，在維持高辨識準確度的同時，確保 App 運行流暢且不致使手機過熱。
 
-  Run `npm run dev` to start the development server.
-  
+遠端安全監控：照護者可隨時隨地透過 App 查看即時影像，掌握家中長者狀態。
+
+https://lyh011403.github.io/Smart-Safety-Care_APK/
