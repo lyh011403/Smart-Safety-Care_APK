@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { createPortal } from "react-dom";
-import { Plus, Trash2, CheckSquare, Clock, BookOpen, X, ChevronRight, Search, Mic, Calendar, SearchCheck, Info, MessageSquare } from "lucide-react";
+import { Plus, Trash2, CheckSquare, Clock, BookOpen, X, ChevronRight, Search, Mic, Calendar, SearchCheck, Info, MessageSquare, Image as ImageIcon, ExternalLink, RefreshCw } from "lucide-react";
 
 export type Category = "Medication" | "Nutrition" | "Exercise" | "Health" | "General";
 
@@ -74,6 +74,63 @@ export function CareTab({
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [confirmDeleteJournalId, setConfirmDeleteJournalId] = useState<number | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+
+  // Gallery State
+  const [showGallery, setShowGallery] = useState(false);
+  const [galleryItems, setGalleryItems] = useState<any[]>([]);
+  const [isGalleryLoading, setIsGalleryLoading] = useState(false);
+
+  const fetchGallery = async () => {
+    setIsGalleryLoading(true);
+    try {
+      const res = await fetch(`${backendUrl}/list_alerts?t=${Date.now()}`);
+      const data = await res.json();
+      if (data && data.alerts) {
+        setGalleryItems(data.alerts);
+      }
+    } catch (e) {
+      console.error("Fetch Gallery Error:", e);
+    } finally {
+      setIsGalleryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showGallery) fetchGallery();
+  }, [showGallery]);
+
+  // Safety Integration
+  const [latestAlertImage, setLatestAlertImage] = useState<string | null>(null);
+  const [riskScore, setRiskScore] = useState(0);
+  const [dismissedImage, setDismissedImage] = useState<string | null>(null);
+  const [backendUrl] = useState(() => {
+    const saved = localStorage.getItem('smart_care_backend_url') || 'http://127.0.0.1:8080';
+    return saved.endsWith('/') ? saved.slice(0, -1) : saved;
+  });
+
+  useEffect(() => {
+    if (!isActive) return;
+
+    const checkRiskAndAlerts = async () => {
+      try {
+        const ts = Date.now();
+        const riskRes = await fetch(`${backendUrl}/risk_data?t=${ts}`);
+        const riskData = await riskRes.json();
+        if (riskData) {
+          setRiskScore(riskData.score);
+          if (riskData.latest_alert_image && riskData.latest_alert_image !== dismissedImage) {
+            setLatestAlertImage(riskData.latest_alert_image);
+          }
+        }
+      } catch (e) {
+        console.error("CareTab Data Fetch Error:", e);
+      }
+    };
+
+    const interval = setInterval(checkRiskAndAlerts, 1000);
+    checkRiskAndAlerts();
+    return () => clearInterval(interval);
+  }, [isActive, backendUrl, dismissedImage]);
 
   useEffect(() => {
     setMounted(true);
@@ -190,6 +247,72 @@ export function CareTab({
         ))}
       </div>
 
+      {/* Emergency Alert Section */}
+      {latestAlertImage && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="rounded-3xl p-4 overflow-hidden relative shimmer-container"
+          style={{
+            background: "rgba(255, 238, 238, 0.8)",
+            border: "2px solid #fecaca",
+            boxShadow: "0 10px 25px -5px rgba(244, 63, 94, 0.2)"
+          }}
+        >
+          <div className="shimmer-effect opacity-30" />
+          <div className="flex justify-between items-center mb-3 relative z-10">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-sm font-black text-red-600 tracking-wide">緊急安全警訊</span>
+            </div>
+            <span className="text-[10px] font-bold text-red-400 bg-red-50 px-2 py-0.5 rounded-full">LIVE EVIDENCE</span>
+          </div>
+
+          <div className="flex gap-4">
+            <div
+              className="w-24 h-24 rounded-2xl overflow-hidden shadow-lg border-2 border-white cursor-zoom-in flex-shrink-0"
+              onClick={() => window.open(`${backendUrl}/alerts?file=${latestAlertImage}`, '_blank')}
+            >
+              <img
+                src={`${backendUrl}/alerts?file=${latestAlertImage}`}
+                className="w-full h-full object-cover"
+                alt="Alert Clip"
+              />
+            </div>
+            <div className="flex-1 flex flex-col justify-center">
+              <p className="text-gray-800 font-extrabold text-[15px] leading-tight mb-1">偵測到異常活動</p>
+              <p className="text-gray-500 text-[11px] font-semibold mb-2">影像已存檔於系統目錄</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => window.open(`${backendUrl}/alerts?file=${latestAlertImage}`, '_blank')}
+                  className="px-3 py-1.5 rounded-xl bg-red-500 text-white text-[10px] font-black shadow-md shadow-red-500/30 active:scale-95 transition-all"
+                >
+                  查看原圖
+                </button>
+                <button
+                  onClick={() => {
+                    setDismissedImage(latestAlertImage);
+                    setLatestAlertImage(null);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-white text-gray-400 text-[10px] font-black border border-gray-100 active:scale-95 transition-all"
+                >
+                  暫時隱藏
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 pt-3 border-t border-red-200/50 flex justify-center">
+            <button
+              onClick={() => setShowGallery(true)}
+              className="flex items-center gap-2 text-red-500 font-bold text-xs hover:underline active:scale-95 transition-all"
+            >
+              <ImageIcon size={14} /> 查看歷史紀錄存檔庫
+            </button>
+          </div>
+        </motion.div>
+      )}
+
       {/* Tasks Mode */}
       {activeMode === "tasks" && (
         <>
@@ -258,7 +381,6 @@ export function CareTab({
                     }}
                     onClick={() => toggleTask(task.id)}
                   >
-                    {/* Checkbox */}
                     <div
                       className="w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center transition-all duration-300"
                       style={
@@ -280,7 +402,6 @@ export function CareTab({
                       )}
                     </div>
 
-                    {/* Content */}
                     <div className="flex-1 min-w-0">
                       <p
                         className="text-gray-800"
@@ -313,7 +434,6 @@ export function CareTab({
                       </div>
                     </div>
 
-                    {/* Delete Button */}
                     <motion.button
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.96 }}
@@ -348,7 +468,6 @@ export function CareTab({
       {/* Journal Mode */}
       {activeMode === "journal" && (
         <div className="flex flex-col gap-4 pb-20">
-          {/* Top Control Bar: Search & Mic */}
           <div className="flex gap-2">
             <div className="flex-1 relative">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
@@ -363,7 +482,6 @@ export function CareTab({
             </div>
           </div>
 
-          {/* Quick Category Filters (Chips) */}
           <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
             {[
               { id: "all", label: "全部", icon: <SearchCheck size={14} /> },
@@ -387,27 +505,21 @@ export function CareTab({
             ))}
           </div>
 
-          {/* Date Selector Row */}
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-2 text-gray-600">
               <Calendar size={14} className="text-blue-500" />
               <span style={{ fontSize: 13, fontWeight: 800 }}>歷史日期</span>
             </div>
             <div className="flex gap-2">
-              {["2025-05-18", "2025-05-19", "2025-05-20"].map(d => (
-                <button
-                  key={d}
-                  onClick={() => setSelectedDate(d)}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold border transition-all ${selectedDate === d ? "bg-white text-blue-600 border-blue-200" : "bg-white/20 text-gray-400 border-transparent"
-                    }`}
-                >
-                  {d.split('-')[2]}
-                </button>
-              ))}
+              <button
+                onClick={() => setShowGallery(true)}
+                className="flex items-center gap-1 px-3 py-1 rounded-lg bg-blue-50 text-blue-500 border border-blue-100 text-[10px] font-bold active:scale-95 transition-all"
+              >
+                <ImageIcon size={12} /> 歷史存檔庫
+              </button>
             </div>
           </div>
 
-          {/* AI Daily Summary Card */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -429,7 +541,6 @@ export function CareTab({
             </p>
           </motion.div>
 
-          {/* Log List */}
           <div className="flex flex-col gap-3">
             {journalEntries
               .filter(e => (selectedCategory === "all" || e.category === selectedCategory))
@@ -489,24 +600,6 @@ export function CareTab({
                               </p>
                             </div>
 
-                            {/* Mock AI Capture Snapshot */}
-                            {(entry.category === 'person' || entry.category === 'alert') && (
-                              <div className="relative rounded-xl overflow-hidden aspect-video group">
-                                <div className="absolute inset-0 bg-gray-200 animate-pulse" />
-                                <img
-                                  src={`https://images.unsplash.com/photo-1558002038-1055907df827?auto=format&fit=crop&w=400&q=80`}
-                                  alt="Capture"
-                                  className="w-full h-full object-cover relative z-10 transition-transform duration-700 group-hover:scale-110"
-                                />
-                                <div className="absolute top-2 left-2 z-20 px-2 py-0.5 rounded bg-red-500/80 text-white text-[8px] font-bold backdrop-blur-sm">
-                                  LIVE CAPTURE
-                                </div>
-                                <div className="absolute bottom-2 right-2 z-20 px-2 py-0.5 rounded bg-black/40 text-white text-[8px] font-mono backdrop-blur-sm">
-                                  CAM-01 · 14:32:05
-                                </div>
-                              </div>
-                            )}
-
                             <div className="flex gap-2">
                               {confirmDeleteJournalId === entry.id ? (
                                 <motion.button
@@ -546,181 +639,203 @@ export function CareTab({
                   </motion.div>
                 );
               })}
-
-            {/* Empty Search Result */}
-            {journalEntries.filter((e: JournalEntry) => (selectedCategory === "all" || e.category === selectedCategory)).filter((e: JournalEntry) => e.message.includes(searchQuery) || e.type.includes(searchQuery)).length === 0 && (
-              <div className="flex flex-col items-center py-10 gap-3">
-                <SearchCheck size={32} className="text-gray-300" />
-                <p className="text-gray-400 font-bold" style={{ fontSize: 13 }}>查無相關日誌紀錄</p>
-              </div>
-            )}
-
-            <p className="text-center text-gray-400 py-6" style={{ fontSize: 11, fontWeight: 700 }}>
-              — 今日記錄共 {journalEntries.length} 筆 · 已過濾 —
-            </p>
           </div>
-
         </div>
       )}
 
-      {/* Glassmorphism Bottom Sheet (Fixed positioning via Portal) */}
-      {mounted && showForm && createPortal(
-        <div
-          ref={overlayRef}
-          className="fixed inset-0 z-[9999] flex items-end justify-center"
-          style={{ background: "rgba(20,30,48,0.45)", backdropFilter: "blur(8px)" }}
-          onClick={(e) => { if (e.target === overlayRef.current) setShowForm(false); }}
-        >
+      {/* Add Task Modal */}
+      <AnimatePresence>
+        {mounted && showForm && createPortal(
           <div
-            className="w-full max-w-sm rounded-t-3xl p-5"
-            style={{
-              background: "rgba(240,244,248,0.92)",
-              backdropFilter: "blur(20px)",
-              boxShadow: "0 -8px 32px rgba(79,172,254,0.15), 0 -2px 10px rgba(0,0,0,0.1)",
-              maxHeight: "85vh",
-              overflowY: "auto",
-            }}
+            ref={overlayRef}
+            className="fixed inset-0 z-[9999] flex items-end justify-center"
+            style={{ background: "rgba(20,30,48,0.45)", backdropFilter: "blur(8px)" }}
+            onClick={(e) => { if (e.target === overlayRef.current) setShowForm(false); }}
           >
-            {/* Form Header */}
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-gray-700" style={{ fontWeight: 700, fontSize: 16 }}>新增照護任務</p>
-              <button
-                onClick={() => setShowForm(false)}
-                className="w-7 h-7 rounded-full flex items-center justify-center"
-                style={{ background: "#F0F4F8", boxShadow: "3px 3px 6px #d1d9e6, -3px -3px 6px #ffffff" }}
-              >
-                <X size={14} className="text-gray-400" />
-              </button>
-            </div>
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              className="w-full max-w-sm rounded-t-3xl p-5"
+              style={{
+                background: "rgba(240,244,248,0.92)",
+                backdropFilter: "blur(20px)",
+                boxShadow: "0 -8px 32px rgba(79,172,254,0.15), 0 -2px 10px rgba(0,0,0,0.1)",
+                maxHeight: "85vh",
+                overflowY: "auto",
+              }}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-gray-700 font-bold text-base">新增照護任務</p>
+                <button
+                  onClick={() => setShowForm(false)}
+                  className="w-7 h-7 rounded-full flex items-center justify-center bg-gray-100 shadow-sm"
+                >
+                  <X size={14} className="text-gray-400" />
+                </button>
+              </div>
 
-            {/* Task Name */}
-            <div className="mb-3">
-              <label className="text-gray-500 mb-1.5 block" style={{ fontSize: 11, fontWeight: 700 }}>
-                任務名稱 <span className="text-red-400">*</span>
-              </label>
-              <input
-                type="text"
-                placeholder="輸入任務名稱..."
-                value={formTitle}
-                onChange={(e) => setFormTitle(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl outline-none text-gray-700 placeholder-gray-300"
-                style={{
-                  background: "#F0F4F8",
-                  boxShadow: "inset 4px 4px 8px #d1d9e6, inset -4px -4px 8px #ffffff",
-                  fontSize: 13,
-                  fontWeight: 500,
-                  border: "none",
-                }}
-              />
-            </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-gray-500 text-[11px] font-bold mb-1 block">任務名稱 *</label>
+                  <input
+                    type="text"
+                    placeholder="輸入任務名稱..."
+                    value={formTitle}
+                    onChange={(e) => setFormTitle(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-white border border-gray-100 outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-gray-500 text-[11px] font-bold mb-1 block">備註說明</label>
+                  <input
+                    type="text"
+                    placeholder="額外備注（選填）..."
+                    value={formNote}
+                    onChange={(e) => setFormNote(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-white border border-gray-100 outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-gray-500 text-[11px] font-bold mb-1 block">時間設定</label>
+                  <input
+                    type="time"
+                    value={formTime}
+                    onChange={(e) => setFormTime(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-white border border-gray-100 outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-gray-500 text-[11px] font-bold mb-1 block">類別選擇</label>
+                  <div className="grid grid-cols-5 gap-2">
+                    {(Object.keys(CATEGORY_META) as Category[]).map((cat) => {
+                      const m = CATEGORY_META[cat];
+                      const selected = formCategory === cat;
+                      return (
+                        <button
+                          key={cat}
+                          onClick={() => setFormCategory(cat)}
+                          className={`flex flex-col items-center py-2 rounded-xl gap-1 transition-all ${selected ? "bg-blue-50 border-blue-200" : "bg-white border-transparent"}`}
+                          style={{ border: "1px solid" }}
+                        >
+                          <span className="text-lg">{m.emoji}</span>
+                          <span className="text-[8px] font-bold">{m.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
-            {/* Note */}
-            <div className="mb-3">
-              <label className="text-gray-500 mb-1.5 block" style={{ fontSize: 11, fontWeight: 700 }}>備註說明</label>
-              <input
-                type="text"
-                placeholder="額外備注（選填）..."
-                value={formNote}
-                onChange={(e) => setFormNote(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl outline-none text-gray-700 placeholder-gray-300"
-                style={{
-                  background: "#F0F4F8",
-                  boxShadow: "inset 4px 4px 8px #d1d9e6, inset -4px -4px 8px #ffffff",
-                  fontSize: 13,
-                  fontWeight: 500,
-                  border: "none",
-                }}
-              />
-            </div>
+                <button
+                  onClick={handleAddTask}
+                  disabled={!formTitle.trim()}
+                  className="w-full py-4 rounded-2xl bg-blue-500 text-white font-black text-sm shadow-lg shadow-blue-500/30 disabled:opacity-50"
+                >
+                  ＋ 新增照護任務
+                </button>
+              </div>
+            </motion.div>
+          </div>,
+          document.body
+        )}
+      </AnimatePresence>
 
-            {/* Time */}
-            <div className="mb-3">
-              <label className="text-gray-500 mb-1.5 block" style={{ fontSize: 11, fontWeight: 700 }}>時間設定</label>
-              <input
-                type="time"
-                value={formTime}
-                onChange={(e) => setFormTime(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl outline-none text-gray-700"
-                style={{
-                  background: "#F0F4F8",
-                  boxShadow: "inset 4px 4px 8px #d1d9e6, inset -4px -4px 8px #ffffff",
-                  fontSize: 13,
-                  fontWeight: 500,
-                  border: "none",
-                }}
-              />
-            </div>
-
-            {/* Category */}
-            <div className="mb-5">
-              <label className="text-gray-500 mb-2 block" style={{ fontSize: 11, fontWeight: 700 }}>類別選擇</label>
-              <div className="grid grid-cols-5 gap-2">
-                {(Object.keys(CATEGORY_META) as Category[]).map((cat) => {
-                  const m = CATEGORY_META[cat];
-                  const selected = formCategory === cat;
-                  return (
-                    <button
-                      key={cat}
-                      onClick={() => setFormCategory(cat)}
-                      className="flex flex-col items-center py-2 rounded-xl gap-1 transition-all duration-200"
-                      style={
-                        selected
-                          ? {
-                            background: m.bg,
-                            boxShadow: `0 0 10px ${m.color}44, 2px 2px 4px ${m.color}22`,
-                            border: `1.5px solid ${m.color}44`,
-                          }
-                          : {
-                            background: "#F0F4F8",
-                            boxShadow: "3px 3px 6px #d1d9e6, -3px -3px 6px #ffffff",
-                            border: "1.5px solid transparent",
-                          }
-                      }
-                    >
-                      <span style={{ fontSize: 16 }}>{m.emoji}</span>
-                      <span style={{ fontSize: 8, fontWeight: 700, color: selected ? m.color : "#9ba8b4" }}>
-                        {m.label}
-                      </span>
-                    </button>
-                  );
-                })}
+      {/* Global Safety Gallery Portal */}
+      {mounted && showGallery && createPortal(
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[10000] flex flex-col pt-12"
+          style={{ background: "rgba(240, 244, 248, 0.98)", backdropFilter: "blur(20px)" }}
+        >
+          {/* Gallery Header */}
+          <div className="px-6 flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-blue-500 text-white shadow-lg shadow-blue-500/30">
+                <ImageIcon size={24} />
+              </div>
+              <div>
+                <h2 className="text-xl font-black text-gray-800 tracking-tight">安全紀錄檔案庫</h2>
+                <p className="text-[10px] font-bold text-gray-400">系統自動擷取之警報影像證據</p>
               </div>
             </div>
-
-            {/* Submit Button */}
             <button
-              onClick={handleAddTask}
-              disabled={!formTitle.trim()}
-              className="w-full py-3.5 rounded-2xl text-white transition-all duration-300 shimmer-container relative"
-              style={
-                formTitle.trim()
-                  ? {
-                    background: "linear-gradient(135deg, rgba(79, 172, 254, 0.95), rgba(0, 242, 254, 0.95))",
-                    boxShadow: "4px 4px 12px rgba(79,172,254,0.4), inset 0 0 0 1px rgba(255,255,255,0.2)",
-                    fontSize: 15,
-                    fontWeight: 800,
-                  }
-                  : {
-                    background: "rgba(209, 217, 230, 0.5)",
-                    boxShadow: "inset 2px 2px 4px #b8c1ce",
-                    fontSize: 15,
-                    fontWeight: 800,
-                    color: "#9ba8b4",
-                    cursor: "not-allowed",
-                  }
-              }
+              onClick={() => setShowGallery(false)}
+              className="w-10 h-10 rounded-full flex items-center justify-center bg-white shadow-md active:scale-90 transition-all border border-gray-100"
             >
-              {formTitle.trim() && (
-                <div className="shimmer-effect" />
-              )}
-              <span className="relative z-10">＋ 新增照護任務</span>
+              <X size={20} className="text-gray-400" />
             </button>
           </div>
-        </div>,
+
+          <div className="flex-1 overflow-y-auto px-6 pb-20 no-scrollbar">
+            {isGalleryLoading ? (
+              <div className="h-40 flex flex-col items-center justify-center gap-2">
+                <RefreshCw size={24} className="text-blue-500 animate-spin" />
+                <span className="text-xs font-bold text-gray-400">正在加載影像...</span>
+              </div>
+            ) : galleryItems.length === 0 ? (
+              <div className="py-20 flex flex-col items-center gap-4 text-gray-400">
+                <ImageIcon size={48} strokeWidth={1} />
+                <p className="font-bold text-sm tracking-wide">目前尚無任何紀錄存檔</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4 pb-10">
+                {galleryItems.map((item, idx) => (
+                  <motion.div
+                    key={item.filename}
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: idx * 0.05 }}
+                    className="group relative rounded-3xl overflow-hidden bg-white shadow-sm border border-gray-100"
+                  >
+                    <div
+                      className="aspect-square relative cursor-zoom-in overflow-hidden"
+                      onClick={() => window.open(`${backendUrl}/alerts?file=${item.filename}`, '_blank')}
+                    >
+                      <img
+                        src={`${backendUrl}/alerts?file=${item.filename}`}
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                        alt="History Alert"
+                        loading="lazy"
+                      />
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-3 pt-6">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                          <span className="text-white font-bold text-[9px] uppercase tracking-widest">{item.label}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-black text-gray-800">{item.timestamp}</span>
+                        <span className="text-[9px] font-black text-blue-500">SCORE {item.score}</span>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setGalleryItems(prev => prev.filter(i => i.filename !== item.filename));
+                        }}
+                        className="w-full py-1.5 rounded-xl bg-gray-50 text-gray-400 text-[9px] font-bold border border-gray-100/50 flex items-center justify-center gap-1 hover:bg-red-50 hover:text-red-400 transition-colors"
+                      >
+                        <Trash2 size={10} /> 移除檔案
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="absolute bottom-8 inset-x-0 px-6 pointer-events-none">
+            <div className="p-4 rounded-2xl bg-white/40 border border-white/50 text-center backdrop-blur-md">
+              <p className="text-[10px] font-bold text-gray-400">影像永久儲存於 ./alerts 目錄下，佔用磁碟空間約 {(galleryItems.length * 0.15).toFixed(1)} MB</p>
+            </div>
+          </div>
+        </motion.div>,
         document.body
-      )
-      }
-    </div >
+      )}
+    </div>
   );
 }
-

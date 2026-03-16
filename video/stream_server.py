@@ -1,4 +1,9 @@
 import os
+from dotenv import load_dotenv
+
+# 加載環境變數
+load_dotenv()
+
 os.environ["OPENCV_LOG_LEVEL"] = "SILENT"
 os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2
@@ -9,6 +14,8 @@ import time
 import requests
 import json
 from ultralytics import YOLO
+import smtplib
+from email.message import EmailMessage
 
 # 獲取當前腳本目錄以確保路徑正確
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,38 +32,74 @@ except ImportError:
     print("[警告] 無法導入 DangerEngine，請檢查 YOLOv8/danger_engine.py 路徑")
     DangerEngine = None
 
+from datetime import datetime
 
+# ========================
 # ========================
 #  設定
 # ========================
 PORT = 8080
-CONF_THRESHOLD = 0.3   # YOLO 信心度門檻
-FPS_TARGET = 30         # 降低幀率節省流量 (15 FPS 對手機監控足夠流暢)
-STREAM_WIDTH = 480      # 串流寬度
-JPEG_QUALITY = 30       # 降低品質大幅節省流量
+CONF_THRESHOLD = 0.3   
+FPS_TARGET = 30         
+STREAM_WIDTH = 480      
+JPEG_QUALITY = 30       
 
-# ========================
-#  初始化
-# ========================
-print(f">> 載入 YOLO 模型: {MODEL_PATH}...")
-try:
-    model = YOLO(MODEL_PATH)
-    print(">> YOLO 模型載入成功！")
-except Exception as e:
-    print(f"[警告] 載入 {MODEL_PATH} 失敗，將串流原始畫面: {e}")
-    model = None
+ROOT_DIR = os.path.dirname(BASE_DIR)
+DEFAULT_MODEL = os.path.join(ROOT_DIR, 'pt', 'best.pt')
+ALERTS_DIR = os.path.join(ROOT_DIR, 'alerts')
+current_model_path = DEFAULT_MODEL
+model = None
+engine = None
 
-# 使用字典管理多個頻道
+def load_yolo_model(path):
+    global model, engine
+    print(f">> [系統] 正在嘗試載入模型: {path}")
+    try:
+        # 建立新模型實例
+        new_model = YOLO(path)
+        
+        # 簡單測試一次推理以確保相依性程式庫已安裝 (例如 TFLite 需要 tensorflow)
+        import numpy as np
+        dummy = np.zeros((640, 640, 3), dtype=np.uint8)
+        new_model(dummy, verbose=False)
+        
+        model = new_model
+        # 重新初始化危險引擎
+        if DangerEngine:
+            engine = DangerEngine(frame_width=STREAM_WIDTH, frame_height=int(STREAM_WIDTH * 0.75))
+        print(f">> [系統] 模型 {os.path.basename(path)} 載入成功！")
+        return True, "成功"
+    except Exception as e:
+        error_msg = str(e)
+        if "tensorflow" in error_msg.lower():
+            error_msg = "環境缺少 tensorflow，無法執行 TFLite 模型。"
+        print(f"[錯誤] 無法載入模型 {path}: {error_msg}")
+        return False, error_msg
+
+# 初始載入
+load_yolo_model(current_model_path)
+
 caps = {}
 latest_jpegs = {}
-latest_risk_data = {"score": 0, "subScores": {"distance": 0, "level": 0, "duration": 0}, "alerts": []}
+latest_risk_data = {
+    "score": 0, 
+    "subScores": {"distance": 0, "level": 0, "duration": 0}, 
+    "alerts": [],
+    "latest_alert_image": None
+}
 is_running = True
-webhook_url = "https://roy1456.app.n8n.cloud/webhook-test/danger-alert"
+webhook_url = "" # 由前端同步
 last_webhook_time = 0
-notification_cooldown = 10 # 10秒冷卻時間，防止連發
-
-if DangerEngine:
-    engine = DangerEngine(frame_width=STREAM_WIDTH, frame_height=int(STREAM_WIDTH * 0.75))
+notification_cooldown = 10 
+email_config = {
+    "receiver": "",
+    "sender": "",
+    "password": "", # App Password
+    "enabled": False
+}
+# 系統內置發信帳號 (由 .env 檔案讀取以保安全)
+SYSTEM_EMAIL_SENDER = os.getenv("SYSTEM_EMAIL_SENDER", "")
+SYSTEM_EMAIL_PASSWORD = os.getenv("SYSTEM_EMAIL_PASSWORD", "")
 
 def send_webhook_notification(score, sub_scores, alerts, is_test=False):
     global last_webhook_time
@@ -116,6 +159,113 @@ def send_webhook_notification(score, sub_scores, alerts, is_test=False):
         print(f"[錯誤] 準備 Webhook 時出錯: {e}")
         return False, str(e)
 
+def send_email_notification(score, label, timestamp, image_path, is_test=False):
+    """
+    發送帶有擷圖附件的電子郵件通知 (使用 EmailMessage 優化版)
+    """
+    if not is_test and (not email_config["enabled"] or not email_config["receiver"]):
+        return False, "郵件功能未啟用或收件人為空"
+    
+    if is_test and not email_config["receiver"]:
+        return False, "測試失敗：未填寫收件人信箱"
+
+    def post_email():
+        try:
+            # 優先使用系統內置帳號
+            sender = email_config["sender"] or SYSTEM_EMAIL_SENDER
+            password = email_config["password"] or SYSTEM_EMAIL_PASSWORD
+            
+            if not sender or not password:
+                print("[錯誤] 缺少發件人帳號或密碼 (內置帳號未設定)")
+                return False, "缺少發送憑證"
+
+            msg = EmailMessage()
+            msg['Subject'] = f"【SmartCare {'測試' if is_test else '警報'}】偵測到高度風險 ({score}%)"
+            msg['From'] = f"Smart Safety Care <{sender}>"
+            msg['To'] = email_config["receiver"]
+
+            body = f"""
+            <h3>Smart Safety Care {'功能測試' if is_test else '系統警報'}</h3>
+            <p><b>觸發時間:</b> {timestamp}</p>
+            <p><b>風險分數:</b> <span style="color:red; font-size:18px;">{score}</span></p>
+            <p><b>偵測對象:</b> {label}</p>
+            <p>{'這是一封功能測試郵件，若您收到此信代表設定正確。' if is_test else '系統已自動擷取影像作為證據，請見附件。'}</p>
+            <hr>
+            <p style="font-size:11px; color:gray;">此郵件由 Smart Safety Care 系統自動發送。</p>
+            """
+            msg.set_content(body, subtype='html')
+
+            if image_path and os.path.exists(image_path):
+                with open(image_path, 'rb') as f:
+                    file_data = f.read()
+                    msg.add_attachment(
+                        file_data, 
+                        maintype='image', 
+                        subtype='jpeg', 
+                        filename=os.path.basename(image_path)
+                    )
+
+            # 改用 587 埠 (STARTTLS) 通常比 465 埠更容易穿透防火牆
+            try:
+                with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as server:
+                    server.starttls()
+                    server.login(sender, password)
+                    server.send_message(msg)
+                    print(f">> [郵件] {'測試' if is_test else '警報'}郵件已發送至: {email_config['receiver']}")
+            except Exception as e:
+                # 如果 587 失敗，最後嘗試一下 465
+                print(f"[警告] 587 埠連線失敗，點試嘗試 465 埠: {e}")
+                with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
+                    server.login(sender, password)
+                    server.send_message(msg)
+                    print(f">> [郵件] (465) {'測試' if is_test else '警報'}郵件已發送至: {email_config['receiver']}")
+
+            return True, "發送成功"
+                
+        except Exception as e:
+            print(f"[錯誤] 發送電子郵件失敗: {e}")
+            return False, str(e)
+
+    if is_test:
+        return post_email()
+    else:
+        threading.Thread(target=post_email, daemon=True).start()
+        return True, "已啟動發送"
+
+def save_alert_image(frame, score, alerts):
+    """
+    儲存警示影像擷圖
+    """
+    try:
+        if not os.path.exists(ALERTS_DIR):
+            os.makedirs(ALERTS_DIR)
+            
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        obj_label = alerts[0].get("object_label", "unknown") if alerts else "unknown"
+        filename = f"ALARM_{timestamp}_Score{score}_{obj_label}.jpg"
+        filepath = os.path.join(ALERTS_DIR, filename)
+        
+        # 儲存影像 (包含標註)
+        # 在影像底部加入時間戳記
+        display_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cv2.putText(frame, display_time, (15, frame.shape[0] - 20), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4, cv2.LINE_AA) # 黑色描邊
+        cv2.putText(frame, display_time, (15, frame.shape[0] - 20), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA) # 白色文字
+        
+        cv2.imwrite(filepath, frame)
+        print(f">> [系統] 警示影像已儲存: {filepath}")
+        
+        # 更新最新截圖路徑 (僅存檔名，透過路由讀取)
+        latest_risk_data["latest_alert_image"] = filename
+        
+        # 觸發郵件通知
+        send_email_notification(score, obj_label, display_time, filepath)
+        
+        return filepath
+    except Exception as e:
+        print(f"[錯誤] 儲存警示影像失敗: {e}")
+        return None
 
 def get_dummy_frame(text="NO SIGNAL"):
     import numpy as np
@@ -224,10 +374,16 @@ def capture_loop():
                                     }
                                     latest_risk_data["alerts"] = alerts
                                     
-                                    # 觸發 Webhook 通知 (如果達成警報門檻)
+                                    # 觸發 Webhook 通知與截圖 (如果達成警報門檻，加入分數過濾)
                                     is_triggered = any(a.get("triggered", False) for a in alerts)
-                                    if is_triggered:
-                                        send_webhook_notification(normalized_score, latest_risk_data["subScores"], alerts)
+                                    if is_triggered and normalized_score >= 90:
+                                        # 檢查冷卻時間 (與 Webhook 共用)
+                                        current_time = time.time()
+                                        if current_time - last_webhook_time >= notification_cooldown:
+                                            # 1. 儲存截圖
+                                            img_path = save_alert_image(annotated, normalized_score, alerts)
+                                            # 2. 發送 Webhook (傳入圖片路徑資訊)
+                                            send_webhook_notification(normalized_score, latest_risk_data["subScores"], alerts)
                                 else:
                                     # 無警報時，分數緩慢下降
                                     latest_risk_data["score"] = max(0, latest_risk_data["score"] - 5)
@@ -275,7 +431,84 @@ class StreamHandler(http.server.BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', '*')
 
+    def do_POST(self):
+        global current_model_path, webhook_url
+        from urllib.parse import urlparse
+        parsed_path = urlparse(self.path)
+        
+        if parsed_path.path == '/set_webhook':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            
+            try:
+                data = json.loads(post_data)
+                webhook_url = data.get('url', "")
+                print(f">> [Webhook] URL 已由前端設定為: {webhook_url}")
+                
+                self.send_response(200)
+                self.send_cors_headers()
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "success", "url": webhook_url}).encode())
+            except Exception as e:
+                self.send_response(400)
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+        elif parsed_path.path == '/set_model':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            
+            try:
+                data = json.loads(post_data)
+                target_path = data.get('path')
+                
+                if not target_path or not os.path.exists(target_path):
+                    success, msg = False, "路徑無效或檔案不存在"
+                else:
+                    success, msg = load_yolo_model(target_path)
+                    if success:
+                        current_model_path = target_path
+
+                self.send_response(200)
+                self.send_cors_headers()
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": success, "message": msg, "current": current_model_path}).encode())
+            except Exception as e:
+                self.send_response(400)
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+        elif parsed_path.path == '/set_email_config':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            try:
+                data = json.loads(post_data)
+                email_config["receiver"] = data.get('receiver', "")
+                email_config["sender"] = data.get('sender', "")
+                email_config["password"] = data.get('password', "")
+                email_config["enabled"] = data.get('enabled', False)
+                
+                print(f">> [郵件] 設定已更新: 收件人={email_config['receiver']}, 啟用={email_config['enabled']}")
+                
+                self.send_response(200)
+                self.send_cors_headers()
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "success"}).encode())
+            except Exception as e:
+                self.send_response(400)
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+        else:
+            self.send_response(404)
+            self.send_cors_headers()
+            self.end_headers()
+
     def do_GET(self):
+        global current_model_path, webhook_url
         from urllib.parse import urlparse, parse_qs
         parsed_path = urlparse(self.path)
         params = parse_qs(parsed_path.query)
@@ -312,7 +545,6 @@ class StreamHandler(http.server.BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            import json
             # 回傳所有頻道的連線狀態
             status = {ch: True for ch in caps}
             self.wfile.write(json.dumps(status).encode())
@@ -322,7 +554,7 @@ class StreamHandler(http.server.BaseHTTPRequestHandler):
             source_param = params.get('source', [None])[0]
             
             self.send_response(200)
-            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_cors_headers()
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             
@@ -353,25 +585,15 @@ class StreamHandler(http.server.BaseHTTPRequestHandler):
             
             if not success:
                 # 自動掃描未被佔用的相機
-                used_indices = []
-                for c in caps.values():
-                    # 嘗試取得索引，若是檔案/URL 則無法取得 int 索引
-                    idx_attr = c.get(cv2.CAP_PROP_POS_FRAMES) # 這裡稍微隨便測一下
-                    # 實際上我們比較難精確知道哪個 index 被用了，簡單掃描 0,1,2 中沒在 caps 裡的
-                    pass 
-                
                 for idx in [0, 1, 2]:
-                    # 避免重複開啟已在其他頻道的相機 (這部分逻辑簡化)
                     temp_cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
                     if temp_cap.isOpened() and temp_cap.read()[0]:
-                        # 檢查是否已被其他頻道使用 (比對物件較難，此處簡單假設 index)
                         caps[ch] = temp_cap
                         print(f">> 頻道 {ch} 自動連線成功：攝影機 {idx}")
                         success = True
                         break
                     temp_cap.release()
                 
-            import json
             self.wfile.write(json.dumps({"connected": success, "ch": ch}).encode())
             
         elif parsed_path.path == '/risk_data':
@@ -379,44 +601,116 @@ class StreamHandler(http.server.BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            import json
             self.wfile.write(json.dumps(latest_risk_data).encode())
             
-        elif parsed_path.path == '/set_webhook':
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            
-            try:
-                data = json.loads(post_data)
-                global webhook_url
-                webhook_url = data.get('url', "")
-                print(f">> [Webhook] URL 已設定為: {webhook_url}")
-                
-                self.send_response(200)
-                self.send_cors_headers()
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "success", "url": webhook_url}).encode())
-            except Exception as e:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(str(e).encode())
-                
-        elif parsed_path.path == '/test_webhook':
+        elif parsed_path.path == '/get_available_models':
             self.send_response(200)
             self.send_cors_headers()
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             
-            if webhook_url:
-                success, msg = send_webhook_notification(99, {"distance": 50, "level": 80, "duration": 10}, [{"object_label": "TEST_OBJECT", "triggered": True}], is_test=True)
-            else:
-                success, msg = False, "未設定 Webhook URL"
-                
-            self.wfile.write(json.dumps({"success": success, "message": msg, "url": webhook_url}).encode())
+            # 掃描 YOLOv8 跟 pt 目錄
+            model_files = []
+            scan_dirs = [
+                os.path.join(ROOT_DIR, 'YOLOv8'),
+                os.path.join(ROOT_DIR, 'pt')
+            ]
             
-        elif parsed_path.path == '/':
+            for d in scan_dirs:
+                if os.path.exists(d):
+                    for f in os.listdir(d):
+                        if f.endswith('.pt') or f.endswith('.tflite') or f.endswith('.onnx'):
+                            full_path = os.path.join(d, f)
+                            rel_path = os.path.relpath(full_path, ROOT_DIR)
+                            model_files.append({
+                                "name": f,
+                                "path": full_path,
+                                "display_path": rel_path,
+                                "type": "TFLite" if f.endswith('.tflite') else ("ONNX" if f.endswith('.onnx') else "PyTorch")
+                            })
+            
+            self.wfile.write(json.dumps({
+                "models": model_files,
+                "current": current_model_path
+            }).encode())
 
+        elif parsed_path.path == '/test_email':
+            # 測試發送郵件
+            self.send_response(200)
+            self.send_cors_headers()
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # 嘗試找最新的警報圖作為測試附件，若無則不附圖
+            latest_img = None
+            if os.path.exists(ALERTS_DIR):
+                import glob
+                files = glob.glob(os.path.join(ALERTS_DIR, "*.jpg"))
+                if files:
+                    latest_img = max(files, key=os.path.getmtime)
+
+            success, msg = send_email_notification(99, "測試對象", timestamp, latest_img, is_test=True)
+            self.wfile.write(json.dumps({"success": success, "message": msg}).encode())
+
+        elif parsed_path.path == '/alerts':
+            # 取得警示影像
+            filename = params.get('file', [None])[0]
+            if not filename:
+                self.send_response(400)
+                self.end_headers()
+                return
+                
+            file_path = os.path.join(ALERTS_DIR, filename)
+            if os.path.exists(file_path):
+                self.send_response(200)
+                self.send_cors_headers()
+                self.send_header('Content-Type', 'image/jpeg')
+                self.end_headers()
+                with open(file_path, 'rb') as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(404)
+                self.end_headers()
+        elif parsed_path.path == '/list_alerts':
+            # 列出所有警示影像
+            self.send_response(200)
+            self.send_cors_headers()
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            
+            alerts = []
+            if os.path.exists(ALERTS_DIR):
+                import glob
+                # 取得所有 .jpg 檔案並依修改時間排序 (由新到舊)
+                files = glob.glob(os.path.join(ALERTS_DIR, "*.jpg"))
+                files.sort(key=os.path.getmtime, reverse=True)
+                
+                for f in files:
+                    fname = os.path.basename(f)
+                    # 從檔名解析資訊: ALARM_YYYYMMDD_HHMMSS_Score75_object.jpg
+                    parts = fname.replace(".jpg", "").split("_")
+                    timestamp = "Unknown"
+                    score = 0
+                    label = "unknown"
+                    
+                    if len(parts) >= 3:
+                        timestamp = f"{parts[1]} {parts[2]}"
+                    if len(parts) >= 4:
+                        score = parts[3].replace("Score", "")
+                    if len(parts) >= 5:
+                        label = parts[4]
+                        
+                    alerts.append({
+                        "filename": fname,
+                        "timestamp": timestamp,
+                        "score": score,
+                        "label": label,
+                        "mtime": os.path.getmtime(f)
+                    })
+            
+            self.wfile.write(json.dumps({"alerts": alerts}).encode())
+        elif parsed_path.path == '/':
             self.send_response(200)
             self.send_header('Content-Type', 'text/html')
             self.end_headers()

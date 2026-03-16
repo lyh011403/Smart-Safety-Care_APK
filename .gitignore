@@ -32,3 +32,15 @@ ENV
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Environment Variables
+.env
+.env.*
+
+# Android local properties
+android/local.properties
+android/.gradle/
+android/build/
+
+# Build artifacts
+release/
