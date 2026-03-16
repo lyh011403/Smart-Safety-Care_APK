@@ -3,7 +3,8 @@
 
 <img width="5760" height="3240" alt="S1" src="https://github.com/user-attachments/assets/0ededadb-08a0-4df4-8c02-b391e4e39a13" />
 
-專案經驗：AI 智慧長照監控系統
+#AI 智慧長照監控系統
+
 核心技術： Python, YOLO, 遷移學習, 知識蒸餾, OpenCV, LabelImg, Roboflow, Figma, GitHub Pages
 專案概述： 獨立開發提升長照環境安全的全端 AI 監控應用，涵蓋資料集建置、模型訓練、輕量化優化，以及前端 UI/UX 設計與部署。
 主要貢獻與成果：
