@@ -566,22 +566,31 @@ export function MonitorTab({
                 <div className="w-full h-full relative overflow-hidden rounded-[12px] bg-[#111827]"
                   style={{ boxShadow: "inset 0 0 20px rgba(0,0,0,0.5)" }}>
                   {isActive && (
-                    <img
-                      src={`${backendUrl}/video_feed?ch=${chId}&nonce=${cameraNonce}`}
-                      alt={`Live Camera Feed CH-${chId}`}
-                      className="w-full h-full object-cover"
-                      onLoad={(e: React.SyntheticEvent<HTMLImageElement>) => {
-                        (e.currentTarget as HTMLImageElement).style.opacity = '1';
-                        setLiveChannels(prev => ({ ...prev, [chId]: true }));
-                      }}
-                      onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
-                        setLiveChannels(prev => ({ ...prev, [chId]: false }));
-                        (e.currentTarget as HTMLImageElement).style.opacity = '0';
-                      }}
-                      style={{ transition: 'opacity 0.5s', opacity: 0 }}
-                    />
+                    cameraSource.includes("shisa.io") ? (
+                      <iframe
+                        src={cameraSource.includes("share/") ? cameraSource : `https://shisa.io/share/${cameraSource}`}
+                        className="w-full h-full border-none"
+                        allow="autoplay; encrypted-media"
+                        allowFullScreen
+                      />
+                    ) : (
+                      <img
+                        src={`${backendUrl}/video_feed?ch=${chId}&nonce=${cameraNonce}`}
+                        alt={`Live Camera Feed CH-${chId}`}
+                        className="w-full h-full object-cover"
+                        onLoad={(e: React.SyntheticEvent<HTMLImageElement>) => {
+                          (e.currentTarget as HTMLImageElement).style.opacity = '1';
+                          setLiveChannels(prev => ({ ...prev, [chId]: true }));
+                        }}
+                        onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
+                          setLiveChannels(prev => ({ ...prev, [chId]: false }));
+                          (e.currentTarget as HTMLImageElement).style.opacity = '0';
+                        }}
+                        style={{ transition: 'opacity 0.5s', opacity: 0 }}
+                      />
+                    )
                   )}
-                  {!liveChannels[chId] && (
+                  {!liveChannels[chId] && !cameraSource.includes("shisa.io") && (
                     <div className="absolute inset-0 bg-[#111827] flex flex-col items-center justify-center gap-2">
                       <Wifi size={viewMode === "1CH" ? 32 : 20} className="text-gray-600 opacity-40" />
                       <span className="text-[10px] font-bold text-gray-700 tracking-widest opacity-40">NO SIGNAL</span>

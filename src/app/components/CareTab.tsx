@@ -162,21 +162,31 @@ export function CareTab({
   };
 
   const handleAddTask = () => {
-    if (!formTitle.trim()) return;
+    const trimmedTitle = formTitle.trim();
+    if (!trimmedTitle) return;
+
     const newTask: Task = {
       id: Date.now(),
-      title: formTitle.trim(),
+      title: trimmedTitle,
       note: formNote.trim(),
       time: formTime || "--:--",
       category: formCategory,
       done: false,
     };
+
     setTasks((prev) => [...prev, newTask]);
+
+    // Reset and Close
     setFormTitle("");
     setFormNote("");
     setFormTime("");
     setFormCategory("General");
     setShowForm(false);
+
+    // Auto switch to tasks mode to see the result
+    if (activeMode !== "tasks") {
+      setActiveMode("tasks");
+    }
   };
 
   // Dismiss delete confirm when clicking elsewhere
@@ -195,19 +205,18 @@ export function CareTab({
           <h2 className="text-gray-700" style={{ fontWeight: 700, fontSize: 18 }}>照護管理</h2>
           <p className="text-xs text-gray-400" style={{ fontWeight: 500 }}>任務與事件紀錄</p>
         </div>
-        {activeMode === "tasks" && (
-          <button
-            onClick={() => setShowForm(true)}
-            className="w-10 h-10 rounded-xl flex items-center justify-center shimmer-container transition-all active:scale-90"
-            style={{
-              background: "linear-gradient(135deg, rgba(79, 172, 254, 0.9), rgba(0, 242, 254, 0.9))",
-              boxShadow: "3px 3px 10px rgba(79,172,254,0.4), inset 0 0 0 1px rgba(255,255,255,0.3)",
-            }}
-          >
-            <div className="shimmer-effect" />
-            <Plus size={20} className="text-white relative z-10" />
-          </button>
-        )}
+
+        <button
+          onClick={() => setShowForm(true)}
+          className="w-10 h-10 rounded-xl flex items-center justify-center shimmer-container transition-all active:scale-90"
+          style={{
+            background: "linear-gradient(135deg, rgba(79, 172, 254, 0.9), rgba(0, 242, 254, 0.9))",
+            boxShadow: "3px 3px 10px rgba(79,172,254,0.4), inset 0 0 0 1px rgba(255,255,255,0.3)",
+          }}
+        >
+          <div className="shimmer-effect" />
+          <Plus size={20} className="text-white relative z-10" />
+        </button>
       </div>
 
       {/* Mode Toggle */}
@@ -644,102 +653,114 @@ export function CareTab({
       )}
 
       {/* Add Task Modal */}
-      <AnimatePresence>
-        {mounted && showForm && createPortal(
-          <div
-            ref={overlayRef}
-            className="fixed inset-0 z-[9999] flex items-end justify-center"
-            style={{ background: "rgba(20,30,48,0.45)", backdropFilter: "blur(8px)" }}
-            onClick={(e) => { if (e.target === overlayRef.current) setShowForm(false); }}
-          >
-            <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="w-full max-w-sm rounded-t-3xl p-5"
-              style={{
-                background: "rgba(240,244,248,0.92)",
-                backdropFilter: "blur(20px)",
-                boxShadow: "0 -8px 32px rgba(79,172,254,0.15), 0 -2px 10px rgba(0,0,0,0.1)",
-                maxHeight: "85vh",
-                overflowY: "auto",
-              }}
+      {mounted && createPortal(
+        <AnimatePresence>
+          {showForm && (
+            <div
+              ref={overlayRef}
+              className="fixed inset-0 z-[9999] flex items-end justify-center"
+              style={{ background: "rgba(20,30,48,0.45)", backdropFilter: "blur(8px)" }}
+              onClick={(e) => { if (e.target === overlayRef.current) setShowForm(false); }}
             >
-              <div className="flex items-center justify-between mb-4">
-                <p className="text-gray-700 font-bold text-base">新增照護任務</p>
-                <button
-                  onClick={() => setShowForm(false)}
-                  className="w-7 h-7 rounded-full flex items-center justify-center bg-gray-100 shadow-sm"
-                >
-                  <X size={14} className="text-gray-400" />
-                </button>
-              </div>
+              <motion.div
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                className="w-full max-w-sm rounded-t-3xl p-5"
+                style={{
+                  background: "rgba(240,244,248,0.92)",
+                  backdropFilter: "blur(20px)",
+                  boxShadow: "0 -8px 32px rgba(79,172,254,0.15), 0 -2px 10px rgba(0,0,0,0.1)",
+                  maxHeight: "85vh",
+                  overflowY: "auto",
+                }}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <p className="text-gray-700 font-bold text-base">新增照護任務</p>
+                  <button
+                    onClick={() => setShowForm(false)}
+                    className="w-7 h-7 rounded-full flex items-center justify-center bg-gray-100 shadow-sm"
+                  >
+                    <X size={14} className="text-gray-400" />
+                  </button>
+                </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="text-gray-500 text-[11px] font-bold mb-1 block">任務名稱 *</label>
-                  <input
-                    type="text"
-                    placeholder="輸入任務名稱..."
-                    value={formTitle}
-                    onChange={(e) => setFormTitle(e.target.value)}
-                    className="w-full px-4 py-3 rounded-xl bg-white border border-gray-100 outline-none text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="text-gray-500 text-[11px] font-bold mb-1 block">備註說明</label>
-                  <input
-                    type="text"
-                    placeholder="額外備注（選填）..."
-                    value={formNote}
-                    onChange={(e) => setFormNote(e.target.value)}
-                    className="w-full px-4 py-3 rounded-xl bg-white border border-gray-100 outline-none text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="text-gray-500 text-[11px] font-bold mb-1 block">時間設定</label>
-                  <input
-                    type="time"
-                    value={formTime}
-                    onChange={(e) => setFormTime(e.target.value)}
-                    className="w-full px-4 py-3 rounded-xl bg-white border border-gray-100 outline-none text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="text-gray-500 text-[11px] font-bold mb-1 block">類別選擇</label>
-                  <div className="grid grid-cols-5 gap-2">
-                    {(Object.keys(CATEGORY_META) as Category[]).map((cat) => {
-                      const m = CATEGORY_META[cat];
-                      const selected = formCategory === cat;
-                      return (
-                        <button
-                          key={cat}
-                          onClick={() => setFormCategory(cat)}
-                          className={`flex flex-col items-center py-2 rounded-xl gap-1 transition-all ${selected ? "bg-blue-50 border-blue-200" : "bg-white border-transparent"}`}
-                          style={{ border: "1px solid" }}
-                        >
-                          <span className="text-lg">{m.emoji}</span>
-                          <span className="text-[8px] font-bold">{m.label}</span>
-                        </button>
-                      );
-                    })}
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-gray-500 text-[11px] font-bold mb-1 block">任務名稱 *</label>
+                    <input
+                      type="text"
+                      placeholder="輸入任務名稱..."
+                      value={formTitle}
+                      onChange={(e) => setFormTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && formTitle.trim()) {
+                          handleAddTask();
+                        }
+                      }}
+                      className="w-full px-4 py-3 rounded-xl bg-white border border-gray-100 outline-none text-sm"
+                    />
                   </div>
-                </div>
+                  <div>
+                    <label className="text-gray-500 text-[11px] font-bold mb-1 block">備註說明</label>
+                    <input
+                      type="text"
+                      placeholder="額外備注（選填）..."
+                      value={formNote}
+                      onChange={(e) => setFormNote(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && formTitle.trim()) {
+                          handleAddTask();
+                        }
+                      }}
+                      className="w-full px-4 py-3 rounded-xl bg-white border border-gray-100 outline-none text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-gray-500 text-[11px] font-bold mb-1 block">時間設定</label>
+                    <input
+                      type="time"
+                      value={formTime}
+                      onChange={(e) => setFormTime(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl bg-white border border-gray-100 outline-none text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-gray-500 text-[11px] font-bold mb-1 block">類別選擇</label>
+                    <div className="grid grid-cols-5 gap-2">
+                      {(Object.keys(CATEGORY_META) as Category[]).map((cat) => {
+                        const m = CATEGORY_META[cat];
+                        const selected = formCategory === cat;
+                        return (
+                          <button
+                            key={cat}
+                            onClick={() => setFormCategory(cat)}
+                            className={`flex flex-col items-center py-2 rounded-xl gap-1 transition-all ${selected ? "bg-blue-50 border-blue-200" : "bg-white border-transparent"}`}
+                            style={{ border: "1px solid" }}
+                          >
+                            <span className="text-lg">{m.emoji}</span>
+                            <span className="text-[8px] font-bold">{m.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
 
-                <button
-                  onClick={handleAddTask}
-                  disabled={!formTitle.trim()}
-                  className="w-full py-4 rounded-2xl bg-blue-500 text-white font-black text-sm shadow-lg shadow-blue-500/30 disabled:opacity-50"
-                >
-                  ＋ 新增照護任務
-                </button>
-              </div>
-            </motion.div>
-          </div>,
-          document.body
-        )}
-      </AnimatePresence>
+                  <button
+                    onClick={handleAddTask}
+                    disabled={!formTitle.trim()}
+                    className="w-full py-4 rounded-2xl bg-blue-500 text-white font-black text-sm shadow-lg shadow-blue-500/30 disabled:opacity-50"
+                  >
+                    ＋ 新增照護任務
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* Global Safety Gallery Portal */}
       {mounted && showGallery && createPortal(

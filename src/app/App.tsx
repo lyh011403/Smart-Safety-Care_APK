@@ -91,8 +91,23 @@ function HeadsUpNotification({
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<Tab>("monitor");
-  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
-  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>(INITIAL_JOURNAL_ENTRIES);
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    const saved = localStorage.getItem('smart_care_tasks');
+    return saved ? JSON.parse(saved) : INITIAL_TASKS;
+  });
+  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>(() => {
+    const saved = localStorage.getItem('smart_care_journal_entries');
+    return saved ? JSON.parse(saved) : INITIAL_JOURNAL_ENTRIES;
+  });
+
+  // Persist Data
+  useEffect(() => {
+    localStorage.setItem('smart_care_tasks', JSON.stringify(tasks));
+  }, [tasks]);
+
+  useEffect(() => {
+    localStorage.setItem('smart_care_journal_entries', JSON.stringify(journalEntries));
+  }, [journalEntries]);
 
   // --- Voice Assistant State & Logic ---
   const [voicePosition, setVoicePosition] = useState({ x: 300, y: 450 });
@@ -277,11 +292,11 @@ function AppContent() {
               style={{ scrollbarWidth: "none" }}
             >
               {activeTab === "monitor" && (
-                <MonitorTab isActive={true} isMobile={isMobile} tasks={tasks} onUpdateTasks={setTasks} onTabChange={setActiveTab} />
+                <MonitorTab isActive={activeTab === "monitor"} isMobile={isMobile} tasks={tasks} onUpdateTasks={setTasks} onTabChange={setActiveTab} />
               )}
-              {activeTab === "health" && <HealthTab isActive={true} isMobile={isMobile} />}
+              {activeTab === "health" && <HealthTab isActive={activeTab === "health"} isMobile={isMobile} />}
               {activeTab === "care" && (
-                <CareTab isActive={true} isMobile={isMobile} tasks={tasks} setTasks={setTasks} journalEntries={journalEntries} setJournalEntries={setJournalEntries} />
+                <CareTab isActive={activeTab === "care"} isMobile={isMobile} tasks={tasks} setTasks={setTasks} journalEntries={journalEntries} setJournalEntries={setJournalEntries} />
               )}
               {activeTab === "settings" && <SettingsTab isMobile={isMobile} />}
             </motion.div>
