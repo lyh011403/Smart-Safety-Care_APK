@@ -53,3 +53,5 @@ AI 智慧長照監控系統
 前端開發與部署： 運用 Figma 規劃高易用性的監控介面，優化醫護與家屬操作體驗；結合 Antigravity 進行網頁開發，並透過 Git 版本控制將專案部署至 GitHub Pages 上線。
 
 <img width="1886" height="1691" alt="Group 1362788845" src="https://github.com/user-attachments/assets/711018a6-4afe-43e9-b1ee-55bb6047672d" />
+
+<img width="3200" height="2400" alt="B" src="https://github.com/user-attachments/assets/32bb61e4-4e46-48ec-a460-ec06eb8f8c85" />
