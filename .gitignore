@@ -44,3 +44,11 @@ android/build/
 
 # Build artifacts
 release/
+
+# Private data - DO NOT UPLOAD
+alerts/
+video/*.jpg
+video/*.png
+video/__pycache__/
+*.pt
+!pt/best.pt
