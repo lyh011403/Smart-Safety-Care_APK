@@ -23,8 +23,8 @@ class DangerEngine:
     ):
         # 危險等級，可自行調整
         self.danger_level = {
-            "scissors": 8.0,
-            "knife": 8.0,
+            "scissors": 10.0,
+            "knife": 10.0,
             
         }
 
@@ -164,7 +164,7 @@ class DangerEngine:
             for obj in dangerous_objects:
                 obj_id = obj["id"]
                 obj_box = obj["box"]
-                obj_label = obj["label"]
+                obj_label = obj["label"].lower().strip()
 
                 if obj_label not in self.danger_level:
                     continue

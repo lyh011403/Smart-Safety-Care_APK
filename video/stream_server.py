@@ -39,13 +39,29 @@ from datetime import datetime
 #  設定
 # ========================
 PORT = 8080
-CONF_THRESHOLD = 0.3   
+# 分別設定不同類別的信心指數 (Confidence Threshold)
+CONF_PERSON = 0.5    # 人的信心門檻
+CONF_KNIFE = 0.2     # 刀具的信心門檻
+CONF_SCISSORS = 0.2  # 剪刀的信心門檻
+
+CONF_THRESHOLD = 0.2 # YOLO 推理時的基礎門檻 (應小於上述各項)
 FPS_TARGET = 30         
 STREAM_WIDTH = 480      
 JPEG_QUALITY = 30       
 
 ROOT_DIR = os.path.dirname(BASE_DIR)
-DEFAULT_MODEL = os.path.join(ROOT_DIR, 'pt', 'best.pt')
+
+# 優先尋找 pt 底下的模型檔案
+def find_best_model():
+    pt_dir = os.path.join(ROOT_DIR, 'pt')
+    if os.path.exists(pt_dir):
+        files = [f for f in os.listdir(pt_dir) if f.endswith('.pt')]
+        if 'best.pt' in files: return os.path.join(pt_dir, 'best.pt')
+        if 'best_end.pt' in files: return os.path.join(pt_dir, 'best_end.pt')
+        if files: return os.path.join(pt_dir, files[0])
+    return os.path.join(ROOT_DIR, 'YOLOv8', 'best.pt')
+
+DEFAULT_MODEL = find_best_model()
 ALERTS_DIR = os.path.join(ROOT_DIR, 'alerts')
 current_model_path = DEFAULT_MODEL
 model = None
@@ -90,7 +106,8 @@ latest_risk_data = {
 is_running = True
 webhook_url = "" # 由前端同步
 last_webhook_time = 0
-notification_cooldown = 10 
+last_snapshot_time = 0 # 新增：獨立控制拍照的冷卻時間
+notification_cooldown = 3 # 拍照與通知間隔均為 3 秒
 email_config = {
     "receiver": "",
     "sender": "",
@@ -308,7 +325,8 @@ for idx in [0, 1, 2]:
 #  攝影機擷取執行緒
 # ========================
 def capture_loop():
-    global latest_jpegs
+    # 必須宣告 global 才能讓冷卻時間在整個程式中被正確記憶與更新
+    global latest_jpegs, last_snapshot_time, last_webhook_time
     while is_running:
         start_time = time.time()
         # 遍歷所有已開啟的頻道
@@ -337,18 +355,38 @@ def capture_loop():
                                 dangerous_objects = []
                                 
                                 # 提取 YOLO 預測框
+                                detected_this_frame = []
                                 for r in results:
                                     boxes = r.boxes
                                     for i, box in enumerate(boxes):
                                         cls_id = int(box.cls[0])
-                                        label = r.names[cls_id]
+                                        conf = float(box.conf[0])
+                                        label = r.names[cls_id].lower().strip() # 轉小寫且去空白
+                                        
+                                        # --- 分類信心過濾 ---
+                                        is_valid = False
+                                        if 'person' in label:
+                                            if conf >= CONF_PERSON: is_valid = True
+                                        elif any(k in label for k in ['knife', 'cutter', 'blade']):
+                                            if conf >= CONF_KNIFE: is_valid = True
+                                        elif 'scissors' in label:
+                                            if conf >= CONF_SCISSORS: is_valid = True
+                                        
+                                        if not is_valid: continue
+                                        # ------------------
+
+                                        detected_this_frame.append(f"{label}({conf:.2f})")
                                         x1, y1, x2, y2 = box.xyxy[0].tolist()
                                         obj_data = {"id": i, "box": (int(x1), int(y1), int(x2), int(y2)), "label": label}
                                         
-                                        if label == 'person':
+                                        if 'person' in label:
                                             persons.append(obj_data)
-                                        elif label in ['scissors', 'knife', 'cutter']:
+                                        elif any(k in label for k in ['scissors', 'knife', 'cutter', 'blade']):
                                             dangerous_objects.append(obj_data)
+                                
+                                # 調試開發用：如果有看到人或刀，印出來看看
+                                if persons or dangerous_objects:
+                                    print(f">> [辨識中] 發現: {detected_this_frame}")
                                 
                                 # 評估風險
                                 alerts = engine.evaluate(persons, dangerous_objects, fps=FPS_TARGET)
@@ -374,16 +412,43 @@ def capture_loop():
                                     }
                                     latest_risk_data["alerts"] = alerts
                                     
-                                    # 觸發 Webhook 通知與截圖 (如果達成警報門檻，加入分數過濾)
-                                    is_triggered = any(a.get("triggered", False) for a in alerts)
-                                    if is_triggered and normalized_score >= 90:
-                                        # 檢查冷卻時間 (與 Webhook 共用)
+                                    # 觸發拍照與通知
+                                    if normalized_score >= 90:
                                         current_time = time.time()
-                                        if current_time - last_webhook_time >= notification_cooldown:
-                                            # 1. 儲存截圖
-                                            img_path = save_alert_image(annotated, normalized_score, alerts)
-                                            # 2. 發送 Webhook (傳入圖片路徑資訊)
-                                            send_webhook_notification(normalized_score, latest_risk_data["subScores"], alerts)
+                                        
+                                        # 如果距離上次拍照已經超過冷卻時間 (預設 3 秒)，或者從未拍過
+                                        if current_time - last_snapshot_time >= notification_cooldown:
+                                            # 先立刻更新時間戳記，這就是「拍完這張開始休息」的關鍵
+                                            last_snapshot_time = current_time
+                                            
+                                            print(f">> [緊急觸發] 風險達 {normalized_score}%！執行立即拍照存檔...")
+                                            
+                                            try:
+                                                # 1. 確保 alerts 資料夾存在
+                                                if not os.path.exists(ALERTS_DIR):
+                                                    os.makedirs(ALERTS_DIR, exist_ok=True)
+                                                
+                                                # 2. 儲存原始畫面
+                                                img_path = save_alert_image(annotated, normalized_score, alerts)
+                                                
+                                                # 3. 如果有設定，發送 Webhook
+                                                if webhook_url:
+                                                    send_webhook_notification(normalized_score, latest_risk_data["subScores"], alerts)
+                                                    
+                                                # 4. 如果有寄信需求，於背景發送
+                                                if email_config.get("enabled") and email_config.get("receiver"):
+                                                    label_name = detected_this_frame[0] if detected_this_frame else "Target"
+                                                    threading.Thread(
+                                                        target=send_email_notification,
+                                                        args=(normalized_score, label_name, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), img_path),
+                                                        daemon=True
+                                                    ).start()
+                                            except Exception as inner_e:
+                                                print(f"[系統錯誤] 拍照自動化流程異常: {inner_e}")
+                                        else:
+                                            # 您可以在這裡加入 debug 用訊息，如果一直跳這個，代表 3 秒還沒到
+                                            # print(f">> [系統冷卻中] 已經拍過了，距離下次連拍還有 {notification_cooldown - (current_time - last_snapshot_time):.1f} 秒")
+                                            pass
                                 else:
                                     # 無警報時，分數緩慢下降
                                     latest_risk_data["score"] = max(0, latest_risk_data["score"] - 5)
