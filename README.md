@@ -1,4 +1,4 @@
-
+https://lyh011403.github.io/Smart-Safety-Care_APK/
   # Smart Safety Care App
 
 <img width="5760" height="3240" alt="S1" src="https://github.com/user-attachments/assets/0ededadb-08a0-4df4-8c02-b391e4e39a13" />
