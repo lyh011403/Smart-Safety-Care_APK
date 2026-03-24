@@ -39,7 +39,7 @@ https://lyh011403.github.io/Smart-Safety-Care_APK/
 
 -----------------------------------------------------------
 
-核心技術： Python, YOLO, 遷移學習, 知識蒸餾, OpenCV, LabelImg, Roboflow, Figma, GitHub Pages
+核心技術： Python, YOLO, 遷移學習, 知識蒸餾, OpenCV, LabelImg, Roboflow, Figma, GitHub Pages , Antigravity
 
 專案概述： 獨立開發提升長照環境安全的全端 AI 監控應用，涵蓋資料集建置、模型訓練、輕量化優化，以及前端 UI/UX 設計與部署。
 主要貢獻與成果：
